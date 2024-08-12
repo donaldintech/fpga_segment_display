@@ -1,4 +1,4 @@
-# Implementing a 4 Digit Display on Cyclone II Altera FPGA Development Board.
+# Implementing a 4 Digit Counter on Cyclone II Altera FPGA Development Board.
 ## Background Info ##
 The DE1 Board has four 7-segment displays. These displays are arranged into a group of four, with the intent of displaying numbers of various sizes. The seven segments are connected to pins on the Cyclone II FPGA (refer to DE1 manual for the specific pins) ; where each segment in a display is identified by an index from 0 to 6.
 Applying a low logic level to a segment causes it to light up, and applying a high logic level turns it off. 
