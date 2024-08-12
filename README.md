@@ -62,16 +62,30 @@ Breaking down our program into sections provide an easier way to understand what
 **•	Libraries**
 
 Define the standard libraries which facilitate design reuse and standard data types for model exchange, reuse, and synthesis. 
-
-![image](https://github.com/user-attachments/assets/fb4c4dcd-5d9a-497f-997a-111cc68f5e1f)
-
+```
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+```
  
 **•	Entity**
 
 Define an entity which contains all the input & output ports to be used in the program
+```
+entity four_digit is
+port (
+    clk : in std_logic;   -- Clock signal
+    rst : in std_logic;   -- Reset signal
+    btn : in std_logic;   -- Pushbutton input
 
-![image](https://github.com/user-attachments/assets/a5299f7b-ab71-444c-a4ff-b2c27666e469)
-
+    seg1 : out std_logic_vector(6 downto 0);  -- 7-segment display 1 (units place)
+    seg2 : out std_logic_vector(6 downto 0);  -- 7-segment display 2 (tens place)
+    seg3 : out std_logic_vector(6 downto 0);  -- 7-segment display 3 (hundreds place)
+    seg4 : out std_logic_vector(6 downto 0);  -- 7-segment display 4 (thousands place)
+    dp   : out std_logic   -- Decimal point (not used here, set to '1')
+);
+end entity;
+```
  
 **•	Architecture**
 
@@ -80,52 +94,156 @@ The main part of our program, contains two sections:
 **1.Signal declaration** 
 
 -This is where you declare all the signals and variables to be used in the processes that follow
+```
+constant seg_patterns : seg_array_type := (
+    "1000000", -- 0
+    "1111001", -- 1
+    "0100100", -- 2
+    "0110000", -- 3
+    "0011001", -- 4
+    "0010010", -- 5
+    "0000010", -- 6
+    "1111000", -- 7
+    "0000000", -- 8
+    "0010000"  -- 9
+);
 
- ![image](https://github.com/user-attachments/assets/40ed0089-cd98-438e-b452-b18fe918138a)
+-- Define the pattern for all segments off
+constant all_off : std_logic_vector(6 downto 0) := "1111111";
 
+-- Signal Declarations
+signal count        : integer := 0;
+signal btn_sync     : std_logic_vector(1 downto 0);
+signal btn_debounce : std_logic;
+signal btn_pressed  : std_logic;
+signal rst_sync     : std_logic_vector(1 downto 0);
+signal rst_debounce : std_logic;
+
+-- Signals for multiplexing
+signal display_sel   : integer := 0; -- For multiplexing display
+signal period_count  : integer := 0; -- For timing multiplexing
+
+-- Signals for 4-digit counter
+signal unit         : integer := 0;
+signal tens          : integer := 0;
+signal hundreds      : integer := 0;
+signal thousands     : integer := 0;
+```
 
  **2.Process definitions** 
 
-•	Synchronize button signal
+**•	Synchronize button signal**
 
 -Our first process is to synchronize the button input signal(btn) with the fpga clock signal(clk) since button presses are asynchronous events, and directly using them in synchronous logic can lead to metastability and unpredictable behavior.
-![image](https://github.com/user-attachments/assets/134698fb-4178-4428-a0e0-cb63333fe87c)
-
- 
--The reset logic ensures the synchronized button signal starts from a safe initial condition, then during a rising edge of the clock signal, the current state of the least significant bit (btn_sync(0)) is concatenated with the current button input (btn) to obtain a new synchronized button signal.
+```
+sync_btn: process(clk, rst)
+    begin
+        if rst = '0' then
+            btn_sync <= "00";
+        elsif rising_edge(clk) then
+            btn_sync <= btn_sync(0) & btn;
+        end if;
+    end process;
+ ```
+-The reset logic ensures the synchronized button signal starts from a safe initial condition, then during a rising edge of the clock signal, the current state of the least significant bit (btn_sync(0)) is concatenated with the current button input (btn) to obtain a new synchronized button signal.<br/>
 -This shifts the previous button state to the left and inserts the current button state as the new least significant bit; thus providing a stable signal to be used in subsequent processes.
 
 **•	Debounce button press**
 
 -This process ensures that the system detects a stable and clean button press without any false triggers (bounced )
-
- ![image](https://github.com/user-attachments/assets/668c4eae-fb3a-45f7-8175-afc553a68758)
-
+```
+ debounce_btn: process(clk, rst)
+    begin
+        if rst = '0' then
+            btn_debounce <= '1';  -- Set to '1' because button is not pressed
+        elsif rising_edge(clk) then
+            if btn_sync(1) = '0' then
+                btn_debounce <= '0';  -- Button pressed
+            else
+                btn_debounce <= '1';  -- Button not pressed
+            end if;
+        end if;
+    end process;
+```
 
 -The reset sets the debounced button to an off state(1) while a rising edge of the clock ensures that when the new value of synchronized button signal is asserted low (0), it is matched to the debounced signal, representing a button press.
 
 **•	Detect button press**
 
 -The process ensures the system detects a stable and valid button press event, avoiding multiple or false detections.
-
-![image](https://github.com/user-attachments/assets/c2c6af43-29b4-45b6-ab22-ec6000c5fe0e)
-
+```
+ detect_btn_press: process(clk, rst)
+    begin
+        if rst = '0' then
+            btn_pressed <= '1';  -- No button press during reset
+        elsif rising_edge(clk) then
+            if btn_debounce = '0' and btn_sync(1) = '1' then
+                btn_pressed <= '0';  -- Button press detected
+            else
+                btn_pressed <= '1';  -- No button press
+            end if;
+        end if;
+    end process;
+```
  
 -A low debounced signal and a stable synchronized signal provide conditions for a valid detection of a button press (0).
 
 **•	Synchronize and Debounce reset signal**
 
 -After synchronizing & debouncing the button input, we can now do the same for the reset button.
+```
+ sync_rst: process(clk, rst)
+    begin
+        if rst = '0' then
+            rst_sync <= "00";
+        elsif rising_edge(clk) then
+            rst_sync <= rst_sync(0) & rst;
+        end if;
+    end process;
 
-  ![image](https://github.com/user-attachments/assets/49ed6041-2bb7-4b68-a3da-3675b4cf8a9e)
-
+    debounce_rst: process(clk, rst)
+    begin
+        if rst = '0' then
+            rst_debounce <= '0';  -- Active low reset
+        elsif rising_edge(clk) then
+            if rst_sync(1) = '0' then
+                rst_debounce <= '0';  -- Reset is active
+            else
+                rst_debounce <= '1';  -- Reset is not active
+            end if;
+        end if;
+    end process;
+```
 
 **•	Counter Logic**
 
 -Now to our final 2 main processes, we need to understand how our counter will be implemented  and later displayed on the board.
+```
+ counter_logic: process(clk, rst)
+    begin
+        if rst_debounce = '0' then
+            count <= 0;
+            unit <= 0;
+            tens <= 0;
+            hundreds <= 0;
+            thousands <= 0;
+        elsif rising_edge(clk) then
+            if btn_pressed = '0' then
+                if count < 9999 then
+                    count <= count + 1;
+                else
+                    count <= 0;
+                end if;
 
-![image](https://github.com/user-attachments/assets/f5ad1707-3177-4b2c-ade0-daf535f93c69)
-
+                -- Update individual digits
+                unit <= count mod 10;
+                tens <= (count / 10) mod 10;
+                hundreds <= (count / 100) mod 10;
+                thousands <= (count / 1000) mod 10;
+            end if;
+        end if;
+    end process;
+```
   
 -For every rising edge of the clock cycle, if a button press is detected, count value is incremented by 1 as long as it is not more than 9999.  
 -The digits are then updated using the ‘mod’ operator which returns a remainder of a division operation i.e: if 4356 is the count value, count mod 10 will be 6, (count /10 ) mod 10 will be 5 etc.
@@ -133,9 +251,54 @@ The main part of our program, contains two sections:
 **•	Display Logic with Multiplexing**
 
 -The purpose of this process is to sequentially activate each of the four 7-segment displays (digits) to show a multi-digit number. This is done by rapidly switching between each digit, giving the illusion that all four digits are lit simultaneously.
+```
+multiplexing_display: process(clk, rst)
+    begin
+        if rst = '0' then
+            period_count <= 0;
+            display_sel <= 0;
+            seg1 <= all_off;  -- Default to all segments off
+            seg2 <= all_off;  -- Default to all segments off
+            seg3 <= all_off;  -- Default to all segments off
+            seg4 <= all_off;  -- Default to all segments off
+        elsif rising_edge(clk) then
+            if period_count < 25000 then
+                period_count <= period_count + 1;
+            else
+                period_count <= 0;
+                display_sel <= (display_sel + 1) mod 4;
+            end if;
 
- ![image](https://github.com/user-attachments/assets/7938801a-1b36-4fa5-9d7f-54cf8db1bb6b)
-
+            case display_sel is
+                when 0 =>
+                    seg1 <= seg_patterns(unit);      -- Units place
+                    seg2 <= all_off;                  -- Turn off tens place
+                    seg3 <= all_off;                  -- Turn off hundreds place
+                    seg4 <= all_off;                  -- Turn off thousands place
+                when 1 =>
+                    seg1 <= all_off;                  -- Turn off units place
+                    seg2 <= seg_patterns(tens);       -- Tens place
+                    seg3 <= all_off;                  -- Turn off hundreds place
+                    seg4 <= all_off;                  -- Turn off thousands place
+                when 2 =>
+                    seg1 <= all_off;                  -- Turn off units place
+                    seg2 <= all_off;                  -- Turn off tens place
+                    seg3 <= seg_patterns(hundreds);   -- Hundreds place
+                    seg4 <= all_off;                  -- Turn off thousands place
+                when 3 =>
+                    seg1 <= all_off;                  -- Turn off units place
+                    seg2 <= all_off;                  -- Turn off tens place
+                    seg3 <= all_off;                  -- Turn off hundreds place
+                    seg4 <= seg_patterns(thousands);  -- Thousands place
+                when others =>
+                    seg1 <= all_off;                  -- Turn off all places
+                    seg2 <= all_off;                  -- Turn off all places
+                    seg3 <= all_off;                  -- Turn off all places
+                    seg4 <= all_off;                  -- Turn off all places
+            end case;
+        end if;
+    end process;
+```
 
 -When the reset is asserted, all signals & segments are turned off but during the rising edge of the cock cycle; the period_count signal (which represents number of clock cycles and is computed from 50 MHz clock and 0.5 mS period)  increments until 25000, meaning it keeps displaying for that long.<br/>
 -Otherwise the period is reset to 0 and thus the display_sel signal determines the segment to display using a modulo operator; whose result is utilized in the case statement.<br/><br/>
